@@ -6,6 +6,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.net.Socket;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
@@ -72,6 +73,59 @@ public class ServerTests {
         }
     }
 
+    /**
+     * Server stub which is used to simulate another
+     * peer when a Server object does an active connect.
+     * Listens on the provided port for a connection,
+     * and then waits for messages once one is established.
+     */
+    private static class ServerStub extends Thread {
+        public int port;
+        public Queue<String> messages;
+
+        public ServerStub(int port) {
+            this.port = port;
+            this.messages = new LinkedList<>();
+        }
+
+        @Override
+        public void run() {
+            Socket conn = null;
+            try {
+                ServerSocket listener = new ServerSocket(port);
+                conn = listener.accept();
+            }
+            catch (IOException e) {
+                reportException(e);
+                System.out.println("ServerStub: Connection could not be opened");
+                return; // Terminate and kill thread
+            }
+
+            ObjectInputStream in;
+            try {
+                in = new ObjectInputStream(conn.getInputStream());
+            }
+            catch (IOException e) {
+                reportException(e);
+                return;
+            }
+
+            while (!this.isInterrupted()) {
+                try {
+                    messages.add((String)in.readObject());
+                }
+                catch (Exception e) {
+                    reportException(e);
+                    return;
+                }
+            }
+        }
+
+        public void reportException(Exception e) {
+            System.out.println("ServerStub Exception: " + e);
+        }
+    }
+
     private InetAddress getLocalHost() {
         InetAddress address = null;
         try {
@@ -120,6 +174,25 @@ public class ServerTests {
         Assertions.assertNotNull(conn);
         Assertions.assertTrue(conn.isConnected());
         client.interrupt();
+        try {
+            conn.close();
+        }
+        catch (IOException e) {
+            Assertions.fail();
+        }
+    }
+
+    @Test
+    void testActiveConnectSuccessful() {
+        int port = 8000;
+        InetAddress address = getLocalHost();
+
+        ServerStub serverstub = new ServerStub(port);
+        serverstub.start();
+        Socket conn = Server.activeConnect(address, port);
+
+        Assertions.assertNotNull(conn);
+        Assertions.assertTrue(conn.isConnected());
         try {
             conn.close();
         }
