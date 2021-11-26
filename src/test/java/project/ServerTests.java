@@ -12,8 +12,7 @@ public class ServerTests {
 
     @Test
     void testMakeHandshakeMessage() {
-        Server server = new Server(PEER1, PEER2, false,
-                (Message m) -> { System.out.println("message queued");});
+        Server server = new Server(PEER1, PEER2, false, (Message m) -> {});
 
         String msg = server.makeHandshakeMessage();
 
@@ -23,5 +22,16 @@ public class ServerTests {
         byte[] idBytes = {0,0,0,0};
         System.arraycopy(StringEncoder.stringToBytes(msg), 28, idBytes, 0, 4);
         Assertions.assertEquals(ByteBuffer.wrap(idBytes).getInt(), PEER1.getId());
+    }
+
+    @Test
+    void testValidateHandshakeMessage() {
+        Server server1 = new Server(PEER1, PEER2, false, (Message m) -> {});
+        Server server2 = new Server(PEER2, PEER1, false, (Message m) -> {});
+        String msg = server1.makeHandshakeMessage();
+
+        // makeHandshakeMessage is correct by previous test, so
+        // only need to test validation
+        Assertions.assertTrue(server2.validateHandshake(msg));
     }
 }
