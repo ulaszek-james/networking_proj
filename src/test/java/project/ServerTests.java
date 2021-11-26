@@ -200,4 +200,13 @@ public class ServerTests {
             Assertions.fail();
         }
     }
+
+    @Test
+    void testActiveConnectFailure() {
+        int port = 8000;
+        InetAddress address = getLocalHost();
+        Socket conn = Server.activeConnect(address, port);
+
+        Assertions.assertNull(conn);
+    }
 }
