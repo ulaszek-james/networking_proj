@@ -72,6 +72,17 @@ public class ServerTests {
         }
     }
 
+    private InetAddress getLocalHost() {
+        InetAddress address = null;
+        try {
+            address = InetAddress.getLocalHost();
+        }
+        catch (UnknownHostException e) {
+            Assertions.fail();
+        }
+        return address;
+    }
+
     @Test
     void testMakeHandshakeMessage() {
         Server server = new Server(PEER1, PEER2, false, (Message m) -> {});
@@ -100,13 +111,7 @@ public class ServerTests {
     @Test
     void testPassiveConnectSuccessful() {
         int port = 8000;
-        InetAddress address = null;
-        try {
-            address = InetAddress.getLocalHost();
-        }
-        catch (UnknownHostException e) {
-            Assertions.fail();
-        }
+        InetAddress address = getLocalHost();
 
         ClientStub client = new ClientStub(address, port);
         client.start();
