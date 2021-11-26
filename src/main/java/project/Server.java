@@ -117,7 +117,7 @@ public class Server extends Thread {
     private boolean setupConnection() {
         Socket conn = null;
         if (passiveStart) {
-            conn = passiveConnect(target.getPort());
+            conn = passiveConnect(self.getPort());
         }
         else {
             InetAddress address = getTargetAddress();
@@ -140,6 +140,7 @@ public class Server extends Thread {
      * server is in "passive start" mode.
      * Opens a server socket and waits for
      * a connection attempt from target.
+     * @param port -- the port for this server to listen on
      * @return a socket to the target, or null
      */
     public static Socket passiveConnect(int port) {
