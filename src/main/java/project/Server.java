@@ -14,8 +14,8 @@ public class Server extends Thread {
 
     final private PeerConfiguration target;
     final private boolean passiveStart;
-    final private Consumer<Message> messageQueue; // Call with messageQueue.accept(msg)
-    final private PeerConfiguration localConfig; // The network configuration of this Server's Peer Process
+    final private Consumer<Message> messageSink; // Call with messageSink.accept(msg)
+    final private PeerConfiguration self; // The network configuration of this Server's Peer Process
 
     private Socket socket; // Used once the connection is established
     private ObjectOutputStream out;
@@ -27,25 +27,25 @@ public class Server extends Thread {
 
     /**
      * Constructor for the Server
-     * @param target - the other peer which this server connects to
-     * @param localConfig - a PeerConfiguration object capturing the network
+     * @param self - a PeerConfiguration object capturing the network
      *                     configuration of this Server and its Peer process.
+     * @param target - the other peer which this server connects to
      * @param passiveStart - If true, the Server will simply wait for
      *                      connections on the proper port. If false,
      *                     the Server will create a new TCP connection.
-     * @param messageQueue - a lambda expression passed by the peer which
+     * @param messageSink - a lambda expression passed by the peer which
      *                     creates this server, allowing the server to push
      *                     it messages
      */
-    public Server(PeerConfiguration target,
-                  PeerConfiguration localConfig,
+    public Server(PeerConfiguration self,
+                  PeerConfiguration target,
                   boolean passiveStart,
-                  Consumer<Message> messageQueue,
+                  Consumer<Message> messageSink
     ) {
         this.target = target;
-        this.localConfig = localConfig;
+        this.self = self;
         this.passiveStart = passiveStart;
-        this.messageQueue = messageQueue;
+        this.messageSink = messageSink;
     }
 
     /**
@@ -84,7 +84,7 @@ public class Server extends Thread {
         try {
             while (!this.isInterrupted()) {
                 String rawMessage = (String) in.readObject();
-                messageQueue.accept(MESSAGE_FACTORY.makeMessage(rawMessage, target));
+                messageSink.accept(MESSAGE_FACTORY.makeMessage(rawMessage, target));
             }
         }
         catch (IOException e) {
@@ -110,16 +110,28 @@ public class Server extends Thread {
     /**
      * Runs the setup process to initialize
      * this Server's socket member. Either
-     * calls passiveStart() or activeStart()
+     * calls passiveConnect() or activeConnect()
      * depending on the start mode of the server.
      * @return whether socket setup was successful
      */
-    public boolean setupConnection() {
+    private boolean setupConnection() {
+        Socket conn = null;
         if (passiveStart) {
-            return passiveStart();
+            conn = passiveConnect(target.getPort());
         }
         else {
-            return activeStart();
+            InetAddress address = getTargetAddress();
+            if (address != null) {
+                conn = activeConnect(address, target.getPort());
+            }
+        }
+
+        if (conn == null) {
+            return false;
+        }
+        else {
+            socket = conn;
+            return true;
         }
     }
 
@@ -128,19 +140,19 @@ public class Server extends Thread {
      * server is in "passive start" mode.
      * Opens a server socket and waits for
      * a connection attempt from target.
-     * @return whether socket setup was successful
+     * @return a socket to the target, or null
      */
-    public boolean passiveStart() {
+    public static Socket passiveConnect(int port) {
+        Socket conn = null;
         try {
-            ServerSocket listener = new ServerSocket(localConfig.getPort(), BACKLOG_SIZE);
-            socket = listener.accept(); // Blocks until successful
+            ServerSocket listener = new ServerSocket(port, BACKLOG_SIZE);
+            conn = listener.accept(); // Blocks until successful
         }
         catch (IOException e) {
             System.out.println("Exception thrown while listening on" +
-                    target.getPort());
-            return false;
+                    port);
         }
-        return true;
+        return conn;
     }
 
     /**
@@ -148,27 +160,29 @@ public class Server extends Thread {
      * in "active start" mode.
      * Finds the targets IP address and attempts
      * to open a connection
-     * @return
+     * @return a socket to the target, or null
      */
-    public boolean activeStart() {
-        InetAddress targetAddress;
+    public static Socket activeConnect(InetAddress address, int port) {
+        Socket conn = null;
+        try {
+            conn = new Socket(address, port);
+        }
+        catch (IOException e) {
+            System.out.println("Exception thrown while opening socket to " + address + ":" + port);
+        }
+        return conn;
+    }
+
+    private InetAddress getTargetAddress() {
+        InetAddress targetAddress = null;
         try {
             targetAddress = InetAddress.getByName(target.getHostname());
         }
         catch (UnknownHostException e) {
             System.out.println("Exception thrown while finding IP address with hostname"
                     + target.getHostname());
-            return false;
         }
-
-        try {
-            socket = new Socket(targetAddress, target.getPort());
-        }
-        catch (IOException e) {
-            System.out.println("Exception thrown while opening socket to " + target);
-            return false;
-        }
-        return true;
+        return targetAddress;
     }
 
     public boolean sendMessage(Message message) {
@@ -215,14 +229,9 @@ public class Server extends Thread {
         return id == target.getId();
     }
 
-    public boolean sendHandshake() {
-        final byte[] zeroBytes = {0,0,0,0,0,0,0,0,0,0};
-        byte[] idBytes = ByteBuffer.allocate(4).putInt(this.localConfig.getId()).array();
-        String handshake = HANDSHAKE_HEADER
-            + StringEncoder.bytesToString(zeroBytes)
-            + StringEncoder.bytesToString(idBytes);
+    private boolean sendHandshake() {
         try {
-            out.writeObject(handshake);
+            out.writeObject(makeHandshakeMessage());
             out.flush();
         }
         catch (IOException e) {
@@ -234,10 +243,18 @@ public class Server extends Thread {
         return true;
     }
 
+    public String makeHandshakeMessage() {
+        final byte[] zeroBytes = {0,0,0,0,0,0,0,0,0,0};
+        byte[] idBytes = ByteBuffer.allocate(4).putInt(this.self.getId()).array();
+        return HANDSHAKE_HEADER
+                + StringEncoder.bytesToString(zeroBytes)
+                + StringEncoder.bytesToString(idBytes);
+    }
+
     /**
      * Perform the handshake with the target peer.
      * If this Server is in "passive start" mode,
-     * it wait to receive a handshake from target
+     * it waits to receive a handshake from target
      * and then sends a handshake back.
      * If this Server is not in "active start" mode
      * (i.e. passiveStart=false), then it sends a
@@ -245,7 +262,7 @@ public class Server extends Thread {
      * a handshake.
      * @return whether the handshake was successful
      */
-    public boolean doHandshake() {
+    private boolean doHandshake() {
         try {
             if (passiveStart) {
                 // Receive then send
