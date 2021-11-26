@@ -3,12 +3,74 @@ package project;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
 
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.net.InetAddress;
+import java.net.Socket;
+import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
+import java.util.LinkedList;
+import java.util.Queue;
 
 public class ServerTests {
 
     private static final PeerConfiguration PEER1 = new PeerConfiguration(1011, "lin114-00.cise.ufl.edu",6008,false);
     private static final PeerConfiguration PEER2 = new PeerConfiguration(1012, "lin114-01.cise.ufl.edu",6008,false);
+
+    /**
+     * Client stub which is used when Server
+     * does a passive connect. Tries to open
+     * a connection to address:port
+     * and then waits for messages.
+     */
+    private class ClientStub extends Thread {
+        public InetAddress address;
+        public int port;
+        public Queue<String> messages;
+        private static final int TIME_OUT = 100;
+
+        public ClientStub(InetAddress address, int port) {
+            this.address = address;
+            this.port = port;
+            this.messages = new LinkedList<>();
+        }
+
+        @Override
+        public void run() {
+            Socket conn = null;
+            try {
+                conn = new Socket(address, port);
+            }
+            catch (IOException e) {
+                reportException(e);
+                System.out.println("ClientStub: Connection could not be opened");
+                return;
+            }
+
+            ObjectInputStream in;
+            try {
+                in = new ObjectInputStream(conn.getInputStream());
+            }
+            catch (IOException e) {
+                reportException(e);
+                return;
+            }
+
+            while (!this.isInterrupted()) {
+                try {
+                    messages.add((String)in.readObject());
+                }
+                catch (Exception e) {
+                    reportException(e);
+                    return;
+                }
+            }
+        }
+
+        public void reportException(Exception e) {
+            System.out.println("ClientStub Exception: " + e);
+        }
+    }
 
     @Test
     void testMakeHandshakeMessage() {
@@ -33,5 +95,31 @@ public class ServerTests {
         // makeHandshakeMessage is correct by previous test, so
         // only need to test validation
         Assertions.assertTrue(server2.validateHandshake(msg));
+    }
+
+    @Test
+    void testPassiveConnectSuccessful() {
+        int port = 8000;
+        InetAddress address = null;
+        try {
+            address = InetAddress.getLocalHost();
+        }
+        catch (UnknownHostException e) {
+            Assertions.fail();
+        }
+
+        ClientStub client = new ClientStub(address, port);
+        client.start();
+        Socket conn = Server.passiveConnect(port);
+
+        Assertions.assertNotNull(conn);
+        Assertions.assertTrue(conn.isConnected());
+        client.interrupt();
+        try {
+            conn.close();
+        }
+        catch (IOException e) {
+            Assertions.fail();
+        }
     }
 }
