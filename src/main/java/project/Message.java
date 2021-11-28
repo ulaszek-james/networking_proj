@@ -92,5 +92,9 @@ public abstract class Message {
         return this.serialize();
     }
 
+    @Override
+    public int hashCode() {
+        return Objects.hash(getPeer().hashCode(), serialize().hashCode());
+    }
 
 }
