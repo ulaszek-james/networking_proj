@@ -11,7 +11,9 @@ import java.net.Socket;
 import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.LinkedList;
+import java.util.NoSuchElementException;
 import java.util.Queue;
+import java.util.concurrent.TimeoutException;
 
 public class ServerTests {
 
@@ -208,5 +210,43 @@ public class ServerTests {
         Socket conn = Server.activeConnect(address, port);
 
         Assertions.assertNull(conn);
+    }
+
+    @Test
+    void testSendMessage() {
+        int port = 8000;
+        PeerConfiguration stubConfiguration = new PeerConfiguration(1001, "localhost", port, false);
+        ServerStub serverStub = new ServerStub(port);
+        Server server = new Server(PEER1 /* dummy */, stubConfiguration, false, (Message m) -> {});
+        MessageFactory factory = new MessageFactory();
+
+        HaveMessage msg = new HaveMessage(1, stubConfiguration);
+
+        serverStub.start();
+        //server.init();
+        server.start();
+
+
+        try {
+            Assertions.assertTrue(server.sendMessage(msg));
+        }
+        catch (Exception e) {
+            Assertions.fail(e.toString());
+        }
+
+        String received = null;
+        try {
+            received = serverStub.messages.remove();
+        }
+        catch (NoSuchElementException e) {
+            Assertions.fail();
+        }
+
+        Assertions.assertNotNull(received);
+        Message receivedMessage = factory.makeMessage(received, stubConfiguration); // Rebuild message exactly the same
+        Assertions.assertEquals(msg, receivedMessage);
+
+        server.interrupt();
+        serverStub.interrupt();
     }
 }
