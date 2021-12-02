@@ -1,5 +1,6 @@
 package project;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
@@ -10,20 +11,22 @@ import java.net.UnknownHostException;
 import java.nio.ByteBuffer;
 import java.util.function.Consumer;
 
-public class Server extends Thread {
+public class Server {
 
     final private PeerConfiguration target;
     final private boolean passiveStart;
-    final private Consumer<Message> messageSink; // Call with messageSink.accept(msg)
+    final private Consumer<Message> messageSink; // Destination of incoming messages - call with messageSink.accept(msg)
     final private PeerConfiguration self; // The network configuration of this Server's Peer Process
 
     private Socket socket; // Used once the connection is established
-    private ObjectOutputStream out;
     private ObjectInputStream in;
+    private ObjectOutputStream out;
 
     private static final int BACKLOG_SIZE = 10;
     private static final MessageFactory MESSAGE_FACTORY = new MessageFactory();
     private static final String HANDSHAKE_HEADER = "P2PFILESHARINGPROJ";
+
+    private InHandler inputReader;
 
     /**
      * Constructor for the Server
@@ -49,62 +52,144 @@ public class Server extends Thread {
     }
 
     /**
-     * The run method invoked by the JVM when
-     * Server.start() is called.
-     *
-     * Note: DO NOT LAUNCH THE SERVER THREAD BY
-     * DIRECTLY INVOKING Server.run(). Instead,
-     * construct the Server object and call
-     * Server.start().
+     * The start method which performs connection
+     * setup and launches the input handling thread.
      */
-    public void run() {
+    public boolean start() {
         // Init Connections
         boolean setupSuccess = setupConnection(); // sets up this.socket
         if (!setupSuccess) {
-            return; // Terminate and kill this thread
+            return false; // Terminate and kill this thread
         }
 
-        // Init streams
         try {
             out = new ObjectOutputStream(socket.getOutputStream());
             out.flush();
             in = new ObjectInputStream(socket.getInputStream());
         }
         catch (IOException e) {
-            System.out.println("Exception thrown while initializing io streams");
-            return;
+            System.out.println("Failure setting up input streams with target " + target);
         }
 
-        boolean handshakeSuccess = doHandshake();
-        if (!handshakeSuccess) {
-            return; // Terminate and kill this thread
+        if (!doHandshake()) {
+            return false; // Terminate and kill this thread
         }
 
-        // Input listening loop
+        this.inputReader = new InHandler(in, target, messageSink);
+        inputReader.start(); // Starts background process
+        return true;
+    }
+
+    public boolean stop() {
+        if (inputReader != null && inputReader.isAlive()) {
+            inputReader.interrupt();
+        }
+
         try {
-            while (!this.isInterrupted()) {
-                String rawMessage = (String) in.readObject();
-                messageSink.accept(MESSAGE_FACTORY.makeMessage(rawMessage, target));
-            }
+            in.close();
+            out.close();
+            socket.close();
         }
         catch (IOException e) {
-            System.out.println("IOException thrown in input loop; disconnecting with " + target);
+            System.out.println("Server::shutdown: Could not close socket successfully");
+            e.printStackTrace();
+            return false;
         }
-        catch (ClassNotFoundException e) {
-            System.out.println("ClassNotFoundException thrown in input loop");
+        return true;
+    }
 
+    private static class InHandler extends Thread {
+
+        private final ObjectInputStream in;
+        private final PeerConfiguration target;
+        private final Consumer<Message> messageSink;
+
+        public InHandler(ObjectInputStream in,
+                       PeerConfiguration target,
+                       Consumer<Message> messageSink
+        ) {
+            this.in = in;
+            this.target = target;
+            this.messageSink = messageSink;
         }
-        finally {
+
+        public void run() {
             try {
-                in.close();
-                out.close();
-                socket.close();
+                while (!this.isInterrupted()) {
+                    String rawMessage = (String) in.readObject();
+//                    byte[] b = {0,0,0,0};
+//                    if (in.read(b) == -1) {
+//                        break;
+//                    }
+//                    int len = ByteBuffer.wrap(b).getInt();
+//                    byte[] content = new byte[len+4];
+//                    System.arraycopy(b, 0, content, 0, 4);
+//                    if (in.read(content, 4, len) == -1) {
+//                        break;
+//                    }
+//                    String rawMessage = StringEncoder.bytesToString(content);
+                    messageSink.accept(MESSAGE_FACTORY.makeMessage(rawMessage, target));
+                }
+            }
+            catch (EOFException e) {
+                System.out.println(e);
+                e.printStackTrace();
             }
             catch (IOException e) {
-                System.out.println("IOException thrown while closing connections");
-                System.out.println("Disconnecting with " + target);
+                System.out.println("Server::InHandler::run IOException thrown. Stopping input from " + target);
+                e.printStackTrace();
+            }
+            catch (ClassNotFoundException e) {
+                System.out.println("Server::InHandler::run ClassNotFoundException thrown. Stopping input from " + target);
+            }
+            this.interrupt();
+            /*
+             * Do not close this.in because it is owned by Server
+             */
+        }
+    }
+
+    private static class OutHandler extends Thread {
+
+        private final Message message;
+        private final ObjectOutputStream out;
+
+        public OutHandler(Message message, ObjectOutputStream out) {
+            this.message = message;
+            this.out = out;
+        }
+
+        public void run() {
+            try {
+                //out.writeObject(StringEncoder.stringToBytes(message.serialize()));
+                out.writeObject(message.serialize());
+                out.flush();
+            }
+            catch (IOException e) {
+                System.out.println("Server::OutHandler::run IOException thrown. Message delivery failed");
+                e.printStackTrace();
+                this.interrupt(); // Interrupts itself to signal caller
             }
         }
+    }
+
+    public boolean sendMessage(Message message) {
+        OutHandler handler = new OutHandler(message, out);
+        handler.start();
+        try {
+            handler.join();
+        }
+        catch (InterruptedException e) {
+            System.out.println("Server::OutHandler::run interrupted; Server::sendMessage may have failed");
+            e.printStackTrace();
+            return false;
+        }
+        /*
+         * Note: out is not closed because calling out.close()
+         * also closes the socket! Just let the output stream by garbage
+         * collected, socket shutdown occurs later.
+         */
+        return true;
     }
 
     /**
@@ -186,19 +271,6 @@ public class Server extends Thread {
         return targetAddress;
     }
 
-    public boolean sendMessage(Message message) {
-        try {
-            out.writeObject(message.serialize());
-            out.flush();
-        }
-        catch (IOException e) {
-            System.out.println("Exception caught while sending message to " + target);
-            e.printStackTrace();
-            return false;
-        }
-        return true;
-    }
-
     public boolean validateHandshake(String raw) {
         byte[] rawBytes = StringEncoder.stringToBytes(raw);
 
@@ -240,7 +312,6 @@ public class Server extends Thread {
             e.printStackTrace();
             return false;
         }
-
         return true;
     }
 
