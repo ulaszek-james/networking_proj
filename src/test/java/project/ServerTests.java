@@ -13,7 +13,10 @@ import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.NoSuchElementException;
 import java.util.Queue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicReference;
 
 public class ServerTests {
 
@@ -215,38 +218,65 @@ public class ServerTests {
     @Test
     void testSendMessage() {
         int port = 8000;
-        PeerConfiguration stubConfiguration = new PeerConfiguration(1001, "localhost", port, false);
-        ServerStub serverStub = new ServerStub(port);
-        Server server = new Server(PEER1 /* dummy */, stubConfiguration, false, (Message m) -> {});
-        MessageFactory factory = new MessageFactory();
+        PeerConfiguration targetConfiguration = new PeerConfiguration(1001, "localhost", port, false);
+        PeerConfiguration selfConfiguration = new PeerConfiguration(1002, "localhost", port + 1, false);
+        HaveMessage msg = new HaveMessage(1, targetConfiguration);
+        System.out.println(String.format("Expected message info: %s", msg.info()));
 
-        HaveMessage msg = new HaveMessage(1, stubConfiguration);
+        AtomicReference<Message> targetReceived = new AtomicReference<>();
+        AtomicReference<Boolean> receiveDone = new AtomicReference<>(false);
+        final ServerTests instance = this;
 
-        serverStub.start();
-        //server.init();
-        server.start();
+        Server target = new Server(targetConfiguration, selfConfiguration, true, (Message m) -> {
+            System.out.println(String.format("Expected message info: %s", m.info()));
+            targetReceived.set(m);
+            receiveDone.set(true);
+            synchronized (instance) {
+                instance.notify();
+            }
+        });
 
+        Server server = new Server(selfConfiguration /* dummy */, targetConfiguration, false, (Message m) -> {});
 
-        try {
-            Assertions.assertTrue(server.sendMessage(msg));
+        Thread t = new Thread(new Runnable() {
+            @Override
+            public void run() {
+                Assertions.assertTrue(server.start());
+                try {
+                    Assertions.assertTrue(server.sendMessage(msg));
+                }
+                catch (Exception e) {
+                    Assertions.fail(e.toString());
+                }
+            }
+        });
+        t.start();
+
+        Assertions.assertTrue(target.start());
+
+        // Wait till the message is received to check equality
+        while (!receiveDone.get()){
+            try {
+                synchronized (this) {
+                    wait();
+                }
+            }
+            catch (InterruptedException e) {
+                System.out.println("Interrupt exception during wait; continuing");
+            }
         }
-        catch (Exception e) {
-            Assertions.fail(e.toString());
-        }
 
-        String received = null;
+        Message received = null;
         try {
-            received = serverStub.messages.remove();
+
+            received = targetReceived.get();
         }
         catch (NoSuchElementException e) {
             Assertions.fail();
         }
-
         Assertions.assertNotNull(received);
-        Message receivedMessage = factory.makeMessage(received, stubConfiguration); // Rebuild message exactly the same
-        Assertions.assertEquals(msg, receivedMessage);
-
-        server.interrupt();
-        serverStub.interrupt();
+        Assertions.assertEquals(msg.toString(), received.toString()); // Compare just the content, not the peer member
+        Assertions.assertTrue(target.stop());
+        Assertions.assertTrue(server.stop());
     }
 }

@@ -97,4 +97,13 @@ public abstract class Message {
         return Objects.hash(getPeer().hashCode(), serialize().hashCode());
     }
 
+    /**
+     * Helper method to see information about the
+     * Message during testing.
+     * @return an informational string about the message
+     */
+    public String info() {
+        return String.format("(Length=%d, Type=%d, Content=%s", getLength(), getType(), getPayloadBytes());
+    }
+
 }
