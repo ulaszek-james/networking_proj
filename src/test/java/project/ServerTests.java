@@ -13,6 +13,8 @@ import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.NoSuchElementException;
 import java.util.Queue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class ServerTests {
@@ -269,6 +271,76 @@ public class ServerTests {
         }
         Assertions.assertNotNull(received);
         Assertions.assertEquals(msg.toString(), received.toString()); // Compare just the content, not the peer member
+        Assertions.assertTrue(target.stop());
+        Assertions.assertTrue(server.stop());
+    }
+
+    @Test
+    void testSendMultipleQueuedMessages() {
+        int port = 8000;
+        PeerConfiguration targetConfiguration = new PeerConfiguration(1001, "localhost", port, false);
+        PeerConfiguration selfConfiguration = new PeerConfiguration(1002, "localhost", port + 1, false);
+        Message[] messages = {
+                new HaveMessage(1, targetConfiguration),
+                new RequestMessage(2, targetConfiguration),
+                new InterestedMessage(targetConfiguration)
+        };
+
+        BlockingQueue<Message> targetReceivedQueue = new LinkedBlockingQueue<>();
+        final ServerTests instance = this;
+
+        Server target = new Server(targetConfiguration, selfConfiguration, true, (Message m) -> {
+            System.out.printf("Expected message info: %s%n", m.info());
+            targetReceivedQueue.add(m);
+
+        });
+
+        Server server = new Server(selfConfiguration /* dummy */, targetConfiguration, false, (Message m) -> {});
+        AtomicReference<Boolean> transmissionDone = new AtomicReference<>(false);
+
+        Thread t = new Thread(() -> {
+            Assertions.assertTrue(server.start());
+            try {
+                for (Message message : messages) {
+                    Assertions.assertTrue(server.sendMessage(message));
+                }
+                transmissionDone.set(true);
+                synchronized (instance) {
+                    instance.notify();
+                }
+            }
+            catch (Exception e) {
+                Assertions.fail(e.toString());
+            }
+        });
+        t.start();
+
+        Assertions.assertTrue(target.start());
+
+        // Wait till the message is received to check equality
+        while (!transmissionDone.get()){
+            try {
+                synchronized (this) {
+                    wait();
+                }
+            }
+            catch (InterruptedException e) {
+                System.out.println("Interrupt exception during wait; continuing");
+            }
+        }
+
+        Message received = null;
+        try {
+            int i = 0;
+            while (!targetReceivedQueue.isEmpty()) {
+                received = targetReceivedQueue.remove();
+                Assertions.assertEquals(messages[i].toString(), received.toString()); // Compare just the content, not the peer member
+                i++;
+            }
+        }
+        catch (NoSuchElementException e) {
+            Assertions.fail();
+        }
         Assertions.assertTrue(target.stop());
         Assertions.assertTrue(server.stop());
     }
