@@ -344,4 +344,70 @@ public class ServerTests {
         Assertions.assertTrue(target.stop());
         Assertions.assertTrue(server.stop());
     }
+
+    @Test
+    void testSendMultipleQueuedMessagesConcurrentHandling() {
+        int port = 8000;
+        PeerConfiguration targetConfiguration = new PeerConfiguration(1001, "localhost", port, false);
+        PeerConfiguration selfConfiguration = new PeerConfiguration(1002, "localhost", port + 1, false);
+        Message[] messages = {
+                new HaveMessage(1, targetConfiguration),
+                new RequestMessage(2, targetConfiguration),
+                new InterestedMessage(targetConfiguration)
+        };
+
+        BlockingQueue<Message> targetReceivedQueue = new LinkedBlockingQueue<>();
+        final ServerTests instance = this;
+
+        Server target = new Server(targetConfiguration, selfConfiguration, true, (Message m) -> {
+            System.out.printf("Expected message info: %s%n", m.info());
+            targetReceivedQueue.add(m);
+            synchronized (instance) {
+                instance.notify();
+            }
+        });
+
+        Server server = new Server(selfConfiguration /* dummy */, targetConfiguration, false, (Message m) -> {});
+
+        Thread t = new Thread(() -> {
+            Assertions.assertTrue(server.start());
+            try {
+                for (Message message : messages) {
+                    Assertions.assertTrue(server.sendMessage(message));
+                }
+            }
+            catch (Exception e) {
+                Assertions.fail(e.toString());
+            }
+        });
+        t.start();
+
+        Assertions.assertTrue(target.start());
+
+        // Wait till the message is received to check equality
+        int messagesHandled = 0;
+        while (messagesHandled < messages.length){
+            try {
+                while(targetReceivedQueue.isEmpty()) {
+                    synchronized (this) {
+                        wait();
+                    }
+                }
+
+                Message received = targetReceivedQueue.remove();
+                Assertions.assertEquals(messages[messagesHandled].toString(), received.toString());
+            }
+            catch (InterruptedException e) {
+                System.out.println("Interrupt exception during wait; continuing");
+            }
+            catch (NoSuchElementException e) {
+                Assertions.fail();
+            }
+
+            messagesHandled++;
+        }
+
+        Assertions.assertTrue(target.stop());
+        Assertions.assertTrue(server.stop());
+    }
 }
