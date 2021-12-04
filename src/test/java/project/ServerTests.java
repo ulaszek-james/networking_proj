@@ -13,9 +13,6 @@ import java.nio.ByteBuffer;
 import java.util.LinkedList;
 import java.util.NoSuchElementException;
 import java.util.Queue;
-import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
-import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicReference;
 
 public class ServerTests {
@@ -29,11 +26,10 @@ public class ServerTests {
      * a connection to address:port
      * and then waits for messages.
      */
-    private class ClientStub extends Thread {
+    private static class ClientStub extends Thread {
         public InetAddress address;
         public int port;
         public Queue<String> messages;
-        private static final int TIME_OUT = 100;
 
         public ClientStub(InetAddress address, int port) {
             this.address = address;
@@ -43,7 +39,7 @@ public class ServerTests {
 
         @Override
         public void run() {
-            Socket conn = null;
+            Socket conn;
             try {
                 conn = new Socket(address, port);
             }
@@ -95,7 +91,7 @@ public class ServerTests {
 
         @Override
         public void run() {
-            Socket conn = null;
+            Socket conn;
             try {
                 ServerSocket listener = new ServerSocket(port);
                 conn = listener.accept();
@@ -221,14 +217,14 @@ public class ServerTests {
         PeerConfiguration targetConfiguration = new PeerConfiguration(1001, "localhost", port, false);
         PeerConfiguration selfConfiguration = new PeerConfiguration(1002, "localhost", port + 1, false);
         HaveMessage msg = new HaveMessage(1, targetConfiguration);
-        System.out.println(String.format("Expected message info: %s", msg.info()));
+        System.out.printf("Expected message info: %s%n", msg.info());
 
         AtomicReference<Message> targetReceived = new AtomicReference<>();
         AtomicReference<Boolean> receiveDone = new AtomicReference<>(false);
         final ServerTests instance = this;
 
         Server target = new Server(targetConfiguration, selfConfiguration, true, (Message m) -> {
-            System.out.println(String.format("Expected message info: %s", m.info()));
+            System.out.printf("Expected message info: %s%n", m.info());
             targetReceived.set(m);
             receiveDone.set(true);
             synchronized (instance) {
@@ -238,16 +234,13 @@ public class ServerTests {
 
         Server server = new Server(selfConfiguration /* dummy */, targetConfiguration, false, (Message m) -> {});
 
-        Thread t = new Thread(new Runnable() {
-            @Override
-            public void run() {
-                Assertions.assertTrue(server.start());
-                try {
-                    Assertions.assertTrue(server.sendMessage(msg));
-                }
-                catch (Exception e) {
-                    Assertions.fail(e.toString());
-                }
+        Thread t = new Thread(() -> {
+            Assertions.assertTrue(server.start());
+            try {
+                Assertions.assertTrue(server.sendMessage(msg));
+            }
+            catch (Exception e) {
+                Assertions.fail(e.toString());
             }
         });
         t.start();
