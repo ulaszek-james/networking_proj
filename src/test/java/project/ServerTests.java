@@ -212,7 +212,7 @@ public class ServerTests {
     }
 
     @Test
-    void testSendMessage() {
+    void testSendSingleMessage() {
         int port = 8000;
         PeerConfiguration targetConfiguration = new PeerConfiguration(1001, "localhost", port, false);
         PeerConfiguration selfConfiguration = new PeerConfiguration(1002, "localhost", port + 1, false);
