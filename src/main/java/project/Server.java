@@ -136,7 +136,7 @@ public class Server {
                 }
             }
             catch (EOFException e) {
-                System.out.println(e);
+                System.out.println("Server::InHandler::run EOFException thrown. Stopping input from " + target);
                 e.printStackTrace();
             }
             catch (IOException e) {
