@@ -360,7 +360,6 @@ public class ServerTests {
         final ServerTests instance = this;
 
         Server target = new Server(targetConfiguration, selfConfiguration, true, (Message m) -> {
-            System.out.printf("Expected message info: %s%n", m.info());
             targetReceivedQueue.add(m);
             synchronized (instance) {
                 instance.notify();
@@ -388,14 +387,11 @@ public class ServerTests {
         int messagesHandled = 0;
         while (messagesHandled < messages.length){
             try {
-                while(targetReceivedQueue.isEmpty()) {
-                    synchronized (this) {
-                        wait();
-                    }
-                }
-
-                Message received = targetReceivedQueue.remove();
-                Assertions.assertEquals(messages[messagesHandled].toString(), received.toString());
+                Message received = targetReceivedQueue.take();
+                received.setPeer(targetConfiguration); // Change the peer for equality check
+                System.out.printf("Message received: %s\n", received.info());
+                System.out.printf("Message expected: %s\n", messages[messagesHandled].info());
+                Assertions.assertEquals(messages[messagesHandled], received);
             }
             catch (InterruptedException e) {
                 System.out.println("Interrupt exception during wait; continuing");
