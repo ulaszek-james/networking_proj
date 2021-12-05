@@ -13,6 +13,7 @@ import java.util.function.Consumer;
 
 public class Server {
 
+
     final private PeerConfiguration target;
     final private boolean passiveStart;
     final private Consumer<Message> messageSink; // Destination of incoming messages - call with messageSink.accept(msg)
@@ -25,6 +26,9 @@ public class Server {
     private static final int BACKLOG_SIZE = 10;
     private static final MessageFactory MESSAGE_FACTORY = new MessageFactory();
     private static final String HANDSHAKE_HEADER = "P2PFILESHARINGPROJ";
+    // BLOCKING_MESSAGE_SEND determines whether calls to Server::sendMessage are blocking to the caller
+    private static final boolean BLOCKING_SEND_MESSAGE = true;
+
 
     private InHandler inputReader;
 
@@ -176,19 +180,17 @@ public class Server {
     public boolean sendMessage(Message message) {
         OutHandler handler = new OutHandler(message, out);
         handler.start();
-        try {
-            handler.join();
+        if (BLOCKING_SEND_MESSAGE) {
+            // Block the caller until the send process completes
+            try {
+                handler.join();
+            }
+            catch (InterruptedException e) {
+                System.out.println("Server::OutHandler::run interrupted; Server::sendMessage may have failed");
+                e.printStackTrace();
+                return false;
+            }
         }
-        catch (InterruptedException e) {
-            System.out.println("Server::OutHandler::run interrupted; Server::sendMessage may have failed");
-            e.printStackTrace();
-            return false;
-        }
-        /*
-         * Note: out is not closed because calling out.close()
-         * also closes the socket! Just let the output stream by garbage
-         * collected, socket shutdown occurs later.
-         */
         return true;
     }
 
