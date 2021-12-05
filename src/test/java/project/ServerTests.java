@@ -406,4 +406,14 @@ public class ServerTests {
         Assertions.assertTrue(target.stop());
         Assertions.assertTrue(server.stop());
     }
+
+    @Test
+    void testServerStartFailure() {
+        int port = 8000;
+        PeerConfiguration self = new PeerConfiguration(1001, "localhost", port, false);
+
+        Server server = new Server(self, PEER1, false, (Message m) -> {});
+
+        Assertions.assertFalse(server.start());
+    }
 }
